@@ -1,140 +1,102 @@
-#decision.py
-
-# Code to call Gemini API for text generation
-import requests
 import json
-import dotenv
-import os 
 import os
-import json
-import re
+import dotenv
 from google import genai
-from google.genai.errors import ServerError
-import yaml
-import asyncio
 
-# Import the local packages for MCP if needed
-from mcp_servers.multiMCP import MultiMCP
-from action.executor import run_user_code
-
-
-# Load environment variables from .env file
 dotenv.load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=API_KEY)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Load prompt from file
-with open("prompts/decision_prompt.txt", "r") as file:
-    prompt_template = file.read()
+with open("prompts/decision_prompt.txt", "r") as f:
+    PROMPT_TEMPLATE = f.read()
 
-# Load memory from JSON file
-with open("memory/memory_state1.json", "r") as file:
-    memory = json.load(file)
-    whatsNeeded = memory["response"]["result_required"]
+class DecisionAgent:
+    def __init__(self, tool_descriptions):
+        self.model = "gemini-2.0-flash"
+        self.tool_descriptions = tool_descriptions
 
-# Function to generate response from Gemini API
-def generate_plan(perception_output):
-    """Generates a response from the Gemini API based on user query about perception."""
-    # print(f"Prompt \n {prompt_template + perception_output}")
-    try:
-        response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents = prompt_template + perception_output 
-                )
-    except ServerError as e:
-        return f"Error: {e.message}"
-    return response.text.strip()
+    def _format_full_history(self, all_versions):
+        """
+        Formats the history of ALL Iterations.
+        """
+        history_str = ""
+        
+        for version in all_versions:
+            iter_num = version.get("iteration_index", 1)
+            steps = version.get("steps", [])
+            
+            if not steps: continue
+            
+            history_str += f"\n=== ITERATION {iter_num} ===\n"
+            
+            for step in steps:
+                status = step.get("status", "UNKNOWN")
+                
+                # Format Result (Truncated)
+                result_raw = str(step.get("execution_result", ""))
+                result_trunc = result_raw[:1000] + "..." if len(result_raw) > 1000 else result_raw
+                
+                # Format Perception
+                perception = step.get("perception") or {}
+                reasoning = perception.get("local_reasoning", "None")
+                
+                history_str += f"Step {step['index']}: {step.get('description', 'No desc')}\n"
+                history_str += f"Status: {status}\n"
+                history_str += f"Code: {step['code'][:100]}...\n"
+                
+                if status == "failed":
+                    history_str += f"Output: {result_trunc}\n"
+                    history_str += f"Critic: {reasoning}\n"
+                else:
+                    # On success, still show output (it might contain URLs for next step)
+                    history_str += f"Output: {result_trunc}\n"
+                
+                history_str += "-" * 20 + "\n"
+                
+        if not history_str:
+            return "No previous history. Start Iteration 1."
+            
+        return history_str
 
+    def generate_next_step(self, state):
+        # We pass get_all_history() now, not just current steps
+        history_str = self._format_full_history(state.get_all_history())
+        
+        prompt = PROMPT_TEMPLATE.format(
+            goal=state.global_perception.get("result_requirement"),
+            tool_descriptions=self.tool_descriptions,
+            history_context=history_str
+        )
 
-# # Step 2: Now let's add tools and tool descriptions and see how the planning could be done.
-# with open("config/mcp_server_config.yaml") as f:
-#     configs = yaml.safe_load(f)["mcp_servers"]
+        print("🤔 Decision: Planning...")
+        try:
+            response = client.models.generate_content(
+                model=self.model, contents=prompt
+            )
+            data = json.loads(self._clean_json(response.text))
+            
+            next_step_data = data.get("next_step", {})
+            if not next_step_data.get("code") and next_step_data.get("type") != "FINAL_ANSWER":
+                return False
 
-# async def _init(configs):
-#     m = MultiMCP(configs)
-#     await m.initialize()
-#     return m
+            new_step = {
+                "index": len(state.current_steps),
+                "type": next_step_data.get("type", "CODE"),
+                "code": next_step_data.get("code", ""),
+                "description": next_step_data.get("description", ""),
+                "status": "pending",
+                "execution_result": None,
+                "perception": None
+            }
+            
+            state.add_plan_step(new_step)
+            print(f"   -> Plan: {new_step['description']}")
+            return True
 
-# mcp = asyncio.run(_init(configs))
+        except Exception as e:
+            print(f"Decision Error: {e}")
+            return False
 
-
-# # 2.2: Get the tool descriptions
-# tool_descriptions_list = mcp.tool_description_wrapper()
-
-# # Comnvert memory["response"] to string
-# # memory_response_str = json.dumps(memory["response"])
-
-# tool_descriptions_list = mcp.tool_description_wrapper()
-# tool_descriptions = "\n".join(f"- `{desc.strip()}`" for desc in tool_descriptions_list)
-# tool_descriptions = "\n\n### The ONLY Available Tools\n\n---\n\n" + tool_descriptions
-
-# perception_output = json.dumps(memory["response"])
-# decision_steps = generate_plan( "\n Perception output: \n" + perception_output + "\n" +tool_descriptions)
-
-
-# ### 1. Extract python code
-# import re
-# from typing import Optional, Tuple
-
-# def extract_python_code(plan_text: str) -> Optional[str]:
-#     """
-#     Extract the first python code block from plan_text.
-#     Returns the code (string) or None if not found.
-#     """
-#     match = re.search(r'```python\s+(.*?)```', plan_text, re.DOTALL)
-#     return match.group(1).strip() if match else None
-
-
-# extract_python_code(decision_steps)
-
-
-
-
-# # 1. Extract python code from the decision result
-# code = extract_python_code(decision_steps)
-# if code is None:
-#     raise ValueError("No python code block found")
-
-# # 2. Run the executor
-# result = asyncio.run(run_user_code(code, mcp))
-
-# print("EXECUTOR RESULT:", result)
-
-# executor_result = result["result"]
-
-
-# prompt_for_critic = "\n\n### Previous perception: \n\n---\n\n" + perception_output + "\n\n### Deicision: \n\n---\n\n" + decision_steps + "\n\n### Executor Result:\n\n---\n\n" + executor_result
-
-# # Load prompt from file
-# with open("prompts/perception_prompt.txt", "r") as file:
-#     prompt_template = file.read()
-
-
-# critic_input = prompt_template + "\n\n" + prompt_for_critic
-
-# # Function to generate response from Gemini API
-# def generate_perception_response(critic_input):
-#     """Generates a response from the Gemini API based on user query about perception."""
-#     try:
-#         response = client.models.generate_content(
-#                     model="gemini-2.0-flash",
-#                     contents=critic_input #.format(user_query=user_query)
-#                 )
-#     except ServerError as e:
-#         return f"Error: {e.message}"
-#     return response.text.strip()
-
-# generate_perception_response(critic_input)
-
-# if __name__ == "__main__":
-#     decision_steps = generate_plan("\n \n perception output in json format is:" + perception_output +"\n" +tool_descriptions)
-#     print("Decision Making Steps:\n", decision_steps)
-
-
-
-
-
-
-
-
-
+    def _clean_json(self, text):
+        text = text.replace("```json", "").replace("```", "").strip()
+        s, e = text.find('{'), text.rfind('}')
+        return text[s:e+1] if s != -1 else "{}"
