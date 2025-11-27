@@ -1,0 +1,16 @@
+{
+    "query": "Find the amount paid by Anmol singh to dlf. Search locally.",
+    "response": {
+        "entities": [
+            "amount paid",
+            "Anmol singh",
+            "dlf",
+            "locally"
+        ],
+        "result_required": "Find the amount paid by Anmol Singh to DLF, searching locally.",
+        "original_goal_achieved": false,
+        "reasoning": "The original goal is not achieved because no search has been performed and no amount has been found yet.",
+        "local_goal_achieved": true,
+        "local_reasoning": "The initial perception step is complete. The user query has been parsed, and entities have been extracted."
+    }
+}

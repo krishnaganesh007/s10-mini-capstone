@@ -1,0 +1,16 @@
+{
+    "session_id": "session-20251126-211615",
+    "start_timestamp": "2025-11-26T15:46:15.593244",
+    "original_query": "How much did Anmol singh paid DLF?",
+    "perception": {
+        "initial": null,
+        "initial_raw": null,
+        "critic": [],
+        "critic_raw": []
+    },
+    "plan_versions": [],
+    "executor": [],
+    "run_log": [],
+    "complete": false,
+    "final_answer": null
+}
